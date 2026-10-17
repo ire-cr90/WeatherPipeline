@@ -533,3 +533,10 @@ def export_alerts_json(
         hot_days["city"].nunique(),
     )
     return path
+
+
+def alert_threshold_for_unit(threshold_c: float, weather_unit: str = "celsius") -> float:
+    """Express the Celsius alert threshold in the unit the temperatures are reported in."""
+    if weather_unit == "fahrenheit":
+        return threshold_c * 9 / 5 + 32
+    return threshold_c
