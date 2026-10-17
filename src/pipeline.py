@@ -14,6 +14,9 @@ from typing import Any
 import httpx
 import pandas as pd
 from dotenv import load_dotenv
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_FILE = PROJECT_ROOT / "data" / "cities_raw.csv"
@@ -39,6 +42,17 @@ REPORT_COLUMNS = [
     "max_temperature",
     "total_precipitation",
 ]
+
+EXCEL_SHEET_NAME = "Daily Weather"
+EXCEL_HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+EXCEL_HEADER_FONT = Font(bold=True, color="FFFFFF")
+EXCEL_NUMBER_FORMATS = {
+    "latitude": "0.00",
+    "longitude": "0.00",
+    "date": "yyyy-mm-dd",
+    "max_temperature": "0.0",
+    "total_precipitation": "0.00",
+}
 
 logger = logging.getLogger("weather_pipeline")
 
@@ -438,14 +452,41 @@ def transform(responses: Mapping[str, Mapping[str, Any]], cities: pd.DataFrame) 
     return merge_with_cities(aggregate_daily(hourly), cities)
 
 
+def _format_worksheet(sheet: Worksheet, df: pd.DataFrame) -> None:
+    """Apply header styling, column widths, frozen header, autofilter and number formats."""
+    for cell in sheet[1]:
+        cell.font = EXCEL_HEADER_FONT
+        cell.fill = EXCEL_HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for index, column in enumerate(df.columns, start=1):
+        letter = get_column_letter(index)
+        values = df[column].astype(str).tolist()
+        width = max([len(str(column)), *(len(value) for value in values)]) + 2
+        sheet.column_dimensions[letter].width = min(width, 50)
+        number_format = EXCEL_NUMBER_FORMATS.get(str(column))
+        if number_format:
+            for (cell,) in sheet.iter_rows(min_row=2, min_col=index, max_col=index):
+                cell.number_format = number_format
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+
+
 def export_excel(
     df: pd.DataFrame, reports_dir: Path | str = REPORTS_DIR, report_date: date | None = None
 ) -> Path:
-    """Write the report table to `reports/weather_report_YYYYMMDD.xlsx`."""
+    """Write the report table to a formatted `reports/weather_report_YYYYMMDD.xlsx`.
+
+    The header is bold with a fill color, columns are sized to their content,
+    the top row is frozen, an autofilter is added and numbers use 1-2 decimals.
+    """
     reports_dir = Path(reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
     stamp = (report_date or date.today()).strftime("%Y%m%d")
     path = reports_dir / f"weather_report_{stamp}.xlsx"
-    df.to_excel(path, sheet_name="Daily Weather", index=False, engine="openpyxl")
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name=EXCEL_SHEET_NAME, index=False)
+        _format_worksheet(writer.sheets[EXCEL_SHEET_NAME], df)
     logger.info("Excel report written to %s (%d rows)", path, len(df))
     return path
