@@ -303,3 +303,32 @@ async def extract_all_async(
         elapsed,
     )
     return results
+
+
+def compare_extraction_modes(
+    cities_df: pd.DataFrame, settings: Settings | None = None
+) -> dict[str, float]:
+    """Run the sequential and async extractions back to back and log their timings.
+
+    Returns the elapsed seconds of each mode and the async speedup factor.
+    """
+    start = time.perf_counter()
+    extract_all(cities_df, settings)
+    sequential_seconds = time.perf_counter() - start
+
+    start = time.perf_counter()
+    asyncio.run(extract_all_async(cities_df, settings))
+    async_seconds = time.perf_counter() - start
+
+    speedup = sequential_seconds / async_seconds if async_seconds > 0 else float("inf")
+    logger.info(
+        "Timing comparison: sequential %.2f s | async %.2f s | speedup x%.1f",
+        sequential_seconds,
+        async_seconds,
+        speedup,
+    )
+    return {
+        "sequential_seconds": sequential_seconds,
+        "async_seconds": async_seconds,
+        "speedup": speedup,
+    }
