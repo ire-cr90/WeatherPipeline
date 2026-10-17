@@ -387,3 +387,11 @@ def handle_missing_values(hourly: pd.DataFrame) -> pd.DataFrame:
     if missing_temperature:
         logger.info("Dropped %d rows without temperature", missing_temperature)
     return cleaned.reset_index(drop=True)
+
+
+def add_date_column(hourly: pd.DataFrame) -> pd.DataFrame:
+    """Convert `time` to datetimes and derive a calendar `date` column."""
+    with_dates = hourly.copy()
+    with_dates["time"] = pd.to_datetime(with_dates["time"])
+    with_dates["date"] = with_dates["time"].dt.date
+    return with_dates
