@@ -395,3 +395,17 @@ def add_date_column(hourly: pd.DataFrame) -> pd.DataFrame:
     with_dates["time"] = pd.to_datetime(with_dates["time"])
     with_dates["date"] = with_dates["time"].dt.date
     return with_dates
+
+
+def aggregate_daily(hourly: pd.DataFrame) -> pd.DataFrame:
+    """Compute the daily maximum temperature and total precipitation per city."""
+    daily = (
+        hourly.groupby(["city", "date"], as_index=False)
+        .agg(
+            max_temperature=("temperature_2m", "max"),
+            total_precipitation=("precipitation", "sum"),
+        )
+        .sort_values(["city", "date"], ignore_index=True)
+    )
+    logger.info("Aggregated %d city-day rows", len(daily))
+    return daily
