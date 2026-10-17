@@ -4,4 +4,9 @@ version = "0.1.0"
 description = "Global Weather Analytics & Alerting Pipeline"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.6",
+    "python-dotenv>=1.2.4",
+]
