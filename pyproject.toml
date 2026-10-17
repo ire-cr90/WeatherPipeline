@@ -1,0 +1,7 @@
+[project]
+name = "weather-pipeline"
+version = "0.1.0"
+description = "Global Weather Analytics & Alerting Pipeline"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
