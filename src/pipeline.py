@@ -27,6 +27,8 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 BACKOFF_SECONDS = 0.5
 MAX_CONCURRENT_REQUESTS = 10
 
+HOURLY_COLUMNS = ["city", "time", "temperature_2m", "precipitation"]
+
 logger = logging.getLogger("weather_pipeline")
 
 
@@ -334,3 +336,38 @@ def compare_extraction_modes(
         "async_seconds": async_seconds,
         "speedup": speedup,
     }
+
+
+def parse_hourly(city: str, payload: Mapping[str, Any]) -> pd.DataFrame:
+    """Turn one Open-Meteo payload into a long DataFrame of hourly rows.
+
+    Returns an empty DataFrame (and logs an `ERROR`) when the `hourly` block is
+    missing or its lists have different lengths.
+    """
+    hourly = payload.get("hourly") or {}
+    try:
+        frame = pd.DataFrame(
+            {
+                "time": hourly["time"],
+                "temperature_2m": hourly["temperature_2m"],
+                "precipitation": hourly["precipitation"],
+            }
+        )
+    except (KeyError, ValueError) as exc:
+        logger.error("Invalid hourly data for %s: %s: %s", city, type(exc).__name__, exc)
+        return pd.DataFrame(columns=HOURLY_COLUMNS)
+    frame.insert(0, "city", city)
+    return frame
+
+
+def parse_responses(responses: Mapping[str, Mapping[str, Any]]) -> pd.DataFrame:
+    """Concatenate every city's hourly rows into one long DataFrame."""
+    frames = [parse_hourly(city, payload) for city, payload in responses.items()]
+    frames = [frame for frame in frames if not frame.empty]
+    if not frames:
+        return pd.DataFrame(columns=HOURLY_COLUMNS)
+    hourly = pd.concat(frames, ignore_index=True)
+    hourly["temperature_2m"] = pd.to_numeric(hourly["temperature_2m"], errors="coerce")
+    hourly["precipitation"] = pd.to_numeric(hourly["precipitation"], errors="coerce")
+    logger.info("Parsed %d hourly rows for %d cities", len(hourly), len(frames))
+    return hourly
