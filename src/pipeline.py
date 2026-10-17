@@ -424,3 +424,13 @@ def merge_with_cities(daily: pd.DataFrame, cities: pd.DataFrame) -> pd.DataFrame
     """Join the daily aggregates with the cities table to recover names and coordinates."""
     merged = cities.merge(daily, on="city", how="inner", validate="one_to_many")
     return merged[REPORT_COLUMNS].sort_values(["city", "date"], ignore_index=True)
+
+
+def transform(responses: Mapping[str, Mapping[str, Any]], cities: pd.DataFrame) -> pd.DataFrame:
+    """Run every transformation step and return the final report table."""
+    hourly = parse_responses(responses)
+    if hourly.empty:
+        logger.error("No hourly data to transform")
+        return pd.DataFrame(columns=REPORT_COLUMNS)
+    hourly = add_date_column(handle_missing_values(hourly))
+    return merge_with_cities(aggregate_daily(hourly), cities)
