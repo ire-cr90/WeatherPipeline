@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_FILE = PROJECT_ROOT / "data" / "cities_raw.csv"
+REPORTS_DIR = PROJECT_ROOT / "reports"
 LOG_FILE = PROJECT_ROOT / "pipeline.log"
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
 
@@ -434,3 +436,16 @@ def transform(responses: Mapping[str, Mapping[str, Any]], cities: pd.DataFrame) 
         return pd.DataFrame(columns=REPORT_COLUMNS)
     hourly = add_date_column(handle_missing_values(hourly))
     return merge_with_cities(aggregate_daily(hourly), cities)
+
+
+def export_excel(
+    df: pd.DataFrame, reports_dir: Path | str = REPORTS_DIR, report_date: date | None = None
+) -> Path:
+    """Write the report table to `reports/weather_report_YYYYMMDD.xlsx`."""
+    reports_dir = Path(reports_dir)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    stamp = (report_date or date.today()).strftime("%Y%m%d")
+    path = reports_dir / f"weather_report_{stamp}.xlsx"
+    df.to_excel(path, sheet_name="Daily Weather", index=False, engine="openpyxl")
+    logger.info("Excel report written to %s (%d rows)", path, len(df))
+    return path
