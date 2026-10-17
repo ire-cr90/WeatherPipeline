@@ -205,3 +205,28 @@ def fetch_weather(
             time.sleep(_backoff_delay(attempt, backoff_seconds))
     logger.error("Giving up on %s after %d attempts", city, total_attempts)
     return None
+
+
+def extract_all(cities_df: pd.DataFrame, settings: Settings | None = None) -> dict[str, dict]:
+    """Fetch every city sequentially, one request at a time.
+
+    Returns a mapping from clean city name to its Open-Meteo JSON payload.
+    Cities that fail are logged and left out. The total time is logged as `INFO`.
+    """
+    settings = settings or Settings()
+    results: dict[str, dict] = {}
+    start = time.perf_counter()
+    with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+        for city_row in cities_df.to_dict("records"):
+            logger.info("Fetching weather for %s", city_row["city"])
+            payload = fetch_weather(client, city_row, settings.max_retries, settings.weather_unit)
+            if payload is not None:
+                results[city_row["city"]] = payload
+    elapsed = time.perf_counter() - start
+    logger.info(
+        "Sequential extraction finished: %d/%d cities in %.2f seconds",
+        len(results),
+        len(cities_df),
+        elapsed,
+    )
+    return results
