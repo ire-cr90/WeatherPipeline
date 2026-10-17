@@ -57,7 +57,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
 def configure_logging(level: str = "INFO", log_file: Path = LOG_FILE) -> None:
     """Send log records to `log_file` and to the console using the shared format.
 
-    Unknown level names fall back to `INFO`.
+    Unknown level names fall back to `INFO`. The per-request logs of `httpx`
+    are limited to warnings so the pipeline's own messages stay readable.
     """
     numeric_level = logging.getLevelNamesMapping().get(level.upper(), logging.INFO)
     logging.basicConfig(
@@ -69,6 +70,7 @@ def configure_logging(level: str = "INFO", log_file: Path = LOG_FILE) -> None:
         ],
         force=True,
     )
+    logging.getLogger("httpx").setLevel(max(numeric_level, logging.WARNING))
 
 
 def _capitalize_word(word: str) -> str:
