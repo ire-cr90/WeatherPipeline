@@ -6,9 +6,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_FILE = PROJECT_ROOT / "data" / "cities_raw.csv"
 LOG_FILE = PROJECT_ROOT / "pipeline.log"
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
 
@@ -82,3 +84,43 @@ def normalize_city_name(raw: str) -> str:
     text = INVALID_NAME_CHARS.sub("", text)
     text = REPEATED_SPACES.sub(" ", text).strip(" -'.")
     return " ".join(_capitalize_word(word) for word in text.split(" ") if word)
+
+
+def load_cities(path: Path | str = DATA_FILE) -> pd.DataFrame:
+    """Read the raw cities CSV, normalize names and drop invalid rows.
+
+    The returned DataFrame has the columns `raw_city`, `city`, `latitude` and
+    `longitude`. Rows with an empty name, non-numeric coordinates, a latitude
+    outside [-90, 90] or a longitude outside [-180, 180] are logged and skipped.
+    """
+    logger.info("Loading cities from %s", path)
+    raw = pd.read_csv(path, dtype={"city": str}, keep_default_na=False, encoding="utf-8")
+    missing_columns = {"city", "latitude", "longitude"} - set(raw.columns)
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
+
+    cities = pd.DataFrame(
+        {
+            "raw_city": raw["city"],
+            "city": raw["city"].map(normalize_city_name),
+            "latitude": pd.to_numeric(raw["latitude"], errors="coerce"),
+            "longitude": pd.to_numeric(raw["longitude"], errors="coerce"),
+        }
+    )
+
+    valid = (
+        (cities["city"] != "")
+        & cities["latitude"].between(-90, 90)
+        & cities["longitude"].between(-180, 180)
+    )
+    for _, row in cities[~valid].iterrows():
+        logger.error(
+            "Skipping invalid row: raw_city=%r latitude=%s longitude=%s",
+            row["raw_city"],
+            row["latitude"],
+            row["longitude"],
+        )
+
+    cities = cities[valid].reset_index(drop=True)
+    logger.info("Loaded %d valid cities (%d skipped)", len(cities), int((~valid).sum()))
+    return cities
