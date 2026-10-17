@@ -3,9 +3,13 @@
 import logging
 import os
 import re
+import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -16,6 +20,10 @@ LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
 
 INVALID_NAME_CHARS = re.compile(r"[^\w\s'.-]|[\d_]")
 REPEATED_SPACES = re.compile(r"\s+")
+
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+REQUEST_TIMEOUT_SECONDS = 10.0
+BACKOFF_SECONDS = 0.5
 
 logger = logging.getLogger("weather_pipeline")
 
@@ -124,3 +132,74 @@ def load_cities(path: Path | str = DATA_FILE) -> pd.DataFrame:
     cities = cities[valid].reset_index(drop=True)
     logger.info("Loaded %d valid cities (%d skipped)", len(cities), int((~valid).sum()))
     return cities
+
+
+class RetryableError(Exception):
+    """Raised when an API response is a transient failure worth retrying."""
+
+
+def build_query_params(city_row: Mapping[str, Any], weather_unit: str = "celsius") -> dict:
+    """Build the Open-Meteo query parameters for one city."""
+    params: dict[str, Any] = {
+        "latitude": city_row["latitude"],
+        "longitude": city_row["longitude"],
+        "hourly": "temperature_2m,precipitation",
+        "timezone": "auto",
+    }
+    if weather_unit == "fahrenheit":
+        params["temperature_unit"] = "fahrenheit"
+    return params
+
+
+def _parse_response(response: httpx.Response, city: str) -> dict | None:
+    """Return the JSON payload, raise `RetryableError` on 5xx, or `None` on other errors."""
+    if response.status_code >= 500:
+        raise RetryableError(f"server error {response.status_code}")
+    if response.status_code >= 400:
+        logger.error("Request for %s failed with status %d", city, response.status_code)
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        logger.error("Response for %s is not valid JSON", city)
+        return None
+
+
+def _backoff_delay(attempt: int, backoff_seconds: float) -> float:
+    """Exponential backoff delay before the next attempt."""
+    return backoff_seconds * 2 ** (attempt - 1)
+
+
+def fetch_weather(
+    client: httpx.Client,
+    city_row: Mapping[str, Any],
+    max_retries: int = 3,
+    weather_unit: str = "celsius",
+    backoff_seconds: float = BACKOFF_SECONDS,
+) -> dict | None:
+    """Fetch the hourly forecast for one city, retrying transient failures.
+
+    Timeouts, connection errors and 5xx responses are retried up to
+    `max_retries` times after the first attempt. Every failed attempt is logged
+    as `ERROR`; `None` is returned when the city cannot be fetched.
+    """
+    city = city_row["city"]
+    params = build_query_params(city_row, weather_unit)
+    total_attempts = max(0, max_retries) + 1
+    for attempt in range(1, total_attempts + 1):
+        try:
+            response = client.get(OPEN_METEO_URL, params=params)
+            return _parse_response(response, city)
+        except (httpx.TransportError, RetryableError) as exc:
+            logger.error(
+                "Attempt %d/%d for %s failed: %s: %s",
+                attempt,
+                total_attempts,
+                city,
+                type(exc).__name__,
+                exc,
+            )
+        if attempt < total_attempts:
+            time.sleep(_backoff_delay(attempt, backoff_seconds))
+    logger.error("Giving up on %s after %d attempts", city, total_attempts)
+    return None
