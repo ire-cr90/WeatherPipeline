@@ -1,5 +1,6 @@
 """Global Weather Analytics & Alerting Pipeline."""
 
+import argparse
 import asyncio
 import json
 import logging
@@ -32,6 +33,7 @@ OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 REQUEST_TIMEOUT_SECONDS = 10.0
 BACKOFF_SECONDS = 0.5
 MAX_CONCURRENT_REQUESTS = 10
+EXTRACTION_MODES = ("sequential", "async", "compare")
 
 HOURLY_COLUMNS = ["city", "time", "temperature_2m", "precipitation"]
 REPORT_COLUMNS = [
@@ -540,3 +542,56 @@ def alert_threshold_for_unit(threshold_c: float, weather_unit: str = "celsius") 
     if weather_unit == "fahrenheit":
         return threshold_c * 9 / 5 + 32
     return threshold_c
+
+
+def extract(cities_df: pd.DataFrame, settings: Settings, mode: str) -> dict[str, dict]:
+    """Dispatch to the sequential, async or comparison extraction."""
+    if mode == "async":
+        return asyncio.run(extract_all_async(cities_df, settings))
+    if mode == "compare":
+        results, _ = compare_extraction_modes(cities_df, settings)
+        return results
+    return extract_all(cities_df, settings)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line options of the pipeline."""
+    parser = argparse.ArgumentParser(description="Global Weather Analytics & Alerting Pipeline")
+    parser.add_argument(
+        "--mode",
+        choices=EXTRACTION_MODES,
+        default="sequential",
+        help="extraction strategy (default: sequential)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the full pipeline: load cities, extract, transform and report.
+
+    Returns the process exit code (0 on success, 1 on failure).
+    """
+    args = parse_args(argv)
+    settings = load_settings()
+    configure_logging(settings.log_level)
+    logger.info("Pipeline started (mode=%s, unit=%s)", args.mode, settings.weather_unit)
+    start = time.perf_counter()
+    try:
+        cities = load_cities()
+        responses = extract(cities, settings, args.mode)
+        if not responses:
+            logger.error("No weather data was extracted; no reports generated")
+            return 1
+        report = transform(responses, cities)
+        export_excel(report)
+        threshold = alert_threshold_for_unit(settings.alert_threshold_c, settings.weather_unit)
+        export_alerts_json(report, threshold)
+    except Exception:
+        logger.exception("Pipeline failed")
+        return 1
+    logger.info("Pipeline finished in %.2f seconds", time.perf_counter() - start)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
