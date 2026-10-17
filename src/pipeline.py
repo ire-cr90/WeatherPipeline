@@ -1,13 +1,14 @@
 """Global Weather Analytics & Alerting Pipeline."""
 
 import asyncio
+import json
 import logging
 import os
 import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -489,4 +490,45 @@ def export_excel(
         df.to_excel(writer, sheet_name=EXCEL_SHEET_NAME, index=False)
         _format_worksheet(writer.sheets[EXCEL_SHEET_NAME], df)
     logger.info("Excel report written to %s (%d rows)", path, len(df))
+    return path
+
+
+def export_alerts_json(
+    df: pd.DataFrame,
+    threshold: float,
+    reports_dir: Path | str = REPORTS_DIR,
+    report_date: date | None = None,
+) -> Path:
+    """Write `reports/weather_alerts_YYYYMMDD.json` with every city-day above `threshold`.
+
+    Each alert holds the city, date, max temperature, threshold used and the
+    generation timestamp. Only rows strictly greater than the threshold qualify.
+    """
+    reports_dir = Path(reports_dir)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    stamp = (report_date or date.today()).strftime("%Y%m%d")
+    path = reports_dir / f"weather_alerts_{stamp}.json"
+    generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    hot_days = df[df["max_temperature"] > threshold].sort_values(
+        ["max_temperature", "city"], ascending=[False, True]
+    )
+    alerts = [
+        {
+            "city": row["city"],
+            "date": str(row["date"]),
+            "max_temperature": round(float(row["max_temperature"]), 1),
+            "threshold": threshold,
+            "generated_at": generated_at,
+        }
+        for _, row in hot_days.iterrows()
+    ]
+    path.write_text(json.dumps(alerts, indent=2, ensure_ascii=False), encoding="utf-8")
+    logger.info(
+        "Alert JSON written to %s (%d alerts above %.1f, %d cities)",
+        path,
+        len(alerts),
+        threshold,
+        hot_days["city"].nunique(),
+    )
     return path
