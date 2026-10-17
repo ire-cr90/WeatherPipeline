@@ -28,6 +28,15 @@ BACKOFF_SECONDS = 0.5
 MAX_CONCURRENT_REQUESTS = 10
 
 HOURLY_COLUMNS = ["city", "time", "temperature_2m", "precipitation"]
+REPORT_COLUMNS = [
+    "raw_city",
+    "city",
+    "latitude",
+    "longitude",
+    "date",
+    "max_temperature",
+    "total_precipitation",
+]
 
 logger = logging.getLogger("weather_pipeline")
 
@@ -409,3 +418,9 @@ def aggregate_daily(hourly: pd.DataFrame) -> pd.DataFrame:
     )
     logger.info("Aggregated %d city-day rows", len(daily))
     return daily
+
+
+def merge_with_cities(daily: pd.DataFrame, cities: pd.DataFrame) -> pd.DataFrame:
+    """Join the daily aggregates with the cities table to recover names and coordinates."""
+    merged = cities.merge(daily, on="city", how="inner", validate="one_to_many")
+    return merged[REPORT_COLUMNS].sort_values(["city", "date"], ignore_index=True)
