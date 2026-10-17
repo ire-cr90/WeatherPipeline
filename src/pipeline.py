@@ -337,13 +337,14 @@ async def extract_all_async(
 
 def compare_extraction_modes(
     cities_df: pd.DataFrame, settings: Settings | None = None
-) -> dict[str, float]:
+) -> tuple[dict[str, dict], dict[str, float]]:
     """Run the sequential and async extractions back to back and log their timings.
 
-    Returns the elapsed seconds of each mode and the async speedup factor.
+    Returns the sequential results (so the pipeline can keep going) together with
+    the elapsed seconds of each mode and the async speedup factor.
     """
     start = time.perf_counter()
-    extract_all(cities_df, settings)
+    results = extract_all(cities_df, settings)
     sequential_seconds = time.perf_counter() - start
 
     start = time.perf_counter()
@@ -357,7 +358,7 @@ def compare_extraction_modes(
         async_seconds,
         speedup,
     )
-    return {
+    return results, {
         "sequential_seconds": sequential_seconds,
         "async_seconds": async_seconds,
         "speedup": speedup,
