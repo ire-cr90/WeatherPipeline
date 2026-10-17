@@ -156,9 +156,11 @@ def build_query_params(city_row: Mapping[str, Any], weather_unit: str = "celsius
 
 
 def _parse_response(response: httpx.Response, city: str) -> dict | None:
-    """Return the JSON payload, raise `RetryableError` on 5xx, or `None` on other errors."""
+    """Return the JSON payload, raise `RetryableError` on 5xx/429, or `None` on other errors."""
     if response.status_code >= 500:
         raise RetryableError(f"server error {response.status_code}")
+    if response.status_code == 429:
+        raise RetryableError("rate limited (429)")
     if response.status_code >= 400:
         logger.error("Request for %s failed with status %d", city, response.status_code)
         return None
