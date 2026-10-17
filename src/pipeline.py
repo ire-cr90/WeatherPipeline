@@ -371,3 +371,19 @@ def parse_responses(responses: Mapping[str, Mapping[str, Any]]) -> pd.DataFrame:
     hourly["precipitation"] = pd.to_numeric(hourly["precipitation"], errors="coerce")
     logger.info("Parsed %d hourly rows for %d cities", len(hourly), len(frames))
     return hourly
+
+
+def handle_missing_values(hourly: pd.DataFrame) -> pd.DataFrame:
+    """Log missing values, drop rows without temperature and fill precipitation with 0.0."""
+    missing_temperature = int(hourly["temperature_2m"].isna().sum())
+    missing_precipitation = int(hourly["precipitation"].isna().sum())
+    logger.info(
+        "Missing values: temperature_2m=%d precipitation=%d",
+        missing_temperature,
+        missing_precipitation,
+    )
+    cleaned = hourly.dropna(subset=["temperature_2m"]).copy()
+    cleaned["precipitation"] = cleaned["precipitation"].fillna(0.0)
+    if missing_temperature:
+        logger.info("Dropped %d rows without temperature", missing_temperature)
+    return cleaned.reset_index(drop=True)
