@@ -1,5 +1,6 @@
 """Global Weather Analytics & Alerting Pipeline."""
 
+import asyncio
 import logging
 import os
 import re
@@ -24,6 +25,7 @@ REPEATED_SPACES = re.compile(r"\s+")
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 REQUEST_TIMEOUT_SECONDS = 10.0
 BACKOFF_SECONDS = 0.5
+MAX_CONCURRENT_REQUESTS = 10
 
 logger = logging.getLogger("weather_pipeline")
 
@@ -225,6 +227,77 @@ def extract_all(cities_df: pd.DataFrame, settings: Settings | None = None) -> di
     elapsed = time.perf_counter() - start
     logger.info(
         "Sequential extraction finished: %d/%d cities in %.2f seconds",
+        len(results),
+        len(cities_df),
+        elapsed,
+    )
+    return results
+
+
+async def fetch_weather_async(
+    client: httpx.AsyncClient,
+    city_row: Mapping[str, Any],
+    max_retries: int = 3,
+    weather_unit: str = "celsius",
+    backoff_seconds: float = BACKOFF_SECONDS,
+) -> dict | None:
+    """Asynchronous counterpart of `fetch_weather` with the same retry rules."""
+    city = city_row["city"]
+    params = build_query_params(city_row, weather_unit)
+    total_attempts = max(0, max_retries) + 1
+    for attempt in range(1, total_attempts + 1):
+        try:
+            response = await client.get(OPEN_METEO_URL, params=params)
+            return _parse_response(response, city)
+        except (httpx.TransportError, RetryableError) as exc:
+            logger.error(
+                "Attempt %d/%d for %s failed: %s: %s",
+                attempt,
+                total_attempts,
+                city,
+                type(exc).__name__,
+                exc,
+            )
+        if attempt < total_attempts:
+            await asyncio.sleep(_backoff_delay(attempt, backoff_seconds))
+    logger.error("Giving up on %s after %d attempts", city, total_attempts)
+    return None
+
+
+async def extract_all_async(
+    cities_df: pd.DataFrame,
+    settings: Settings | None = None,
+    max_concurrency: int = MAX_CONCURRENT_REQUESTS,
+) -> dict[str, dict]:
+    """Fetch every city concurrently with `httpx.AsyncClient` and `asyncio.gather`.
+
+    A semaphore caps the number of simultaneous requests to respect the API.
+    Returns the same mapping as `extract_all`.
+    """
+    settings = settings or Settings()
+    semaphore = asyncio.Semaphore(max_concurrency)
+    city_rows = cities_df.to_dict("records")
+    start = time.perf_counter()
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+
+        async def fetch_with_limit(city_row: Mapping[str, Any]) -> dict | None:
+            async with semaphore:
+                logger.info("Fetching weather for %s (async)", city_row["city"])
+                return await fetch_weather_async(
+                    client, city_row, settings.max_retries, settings.weather_unit
+                )
+
+        payloads = await asyncio.gather(*(fetch_with_limit(row) for row in city_rows))
+
+    results = {
+        row["city"]: payload
+        for row, payload in zip(city_rows, payloads, strict=True)
+        if payload is not None
+    }
+    elapsed = time.perf_counter() - start
+    logger.info(
+        "Async extraction finished: %d/%d cities in %.2f seconds",
         len(results),
         len(cities_df),
         elapsed,
